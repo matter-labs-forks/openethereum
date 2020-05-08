@@ -49,7 +49,7 @@ use parity_daemonize::AsHandle;
 use parking_lot::{Condvar, Mutex};
 
 const PLEASE_RESTART_EXIT_CODE: i32 = 69;
-const PARITY_EXECUTABLE_NAME: &str = "parity";
+const PARITY_EXECUTABLE_NAME: &str = "openethereum";
 
 #[derive(Debug)]
 enum Error {

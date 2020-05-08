@@ -439,7 +439,7 @@ impl Configuration {
 	}
 
 	fn author(&self) -> Result<Address, String> {
-		to_address(self.args.arg_etherbase.clone().or(self.args.arg_author.clone()))
+		to_address(self.args.arg_author.clone())
 	}
 
 	fn engine_signer(&self) -> Result<Address, String> {
@@ -456,7 +456,7 @@ impl Configuration {
 	}
 
 	fn cache_config(&self) -> CacheConfig {
-		match self.args.arg_cache_size.or(self.args.arg_cache) {
+		match self.args.arg_cache_size {
 			Some(size) => CacheConfig::new_with_total_cache_size(size),
 			None => CacheConfig::new(
 				self.args.arg_cache_size_db,
@@ -637,9 +637,7 @@ impl Configuration {
 			U256::from_dec_str(&format!("{:.0}", wei_per_gas)).unwrap()
 		}
 
-		if let Some(dec) = self.args.arg_gasprice.as_ref() {
-			return Ok(GasPricerConfig::Fixed(to_u256(dec)?));
-		} else if let Some(dec) = self.args.arg_min_gas_price {
+		if let Some(dec) = self.args.arg_min_gas_price {
 			return Ok(GasPricerConfig::Fixed(U256::from(dec)));
 		} else if self.chain()? != SpecType::Foundation {
 			return Ok(GasPricerConfig::Fixed(U256::zero()));
@@ -673,7 +671,7 @@ impl Configuration {
 	}
 
 	fn extra_data(&self) -> Result<Bytes, String> {
-		match self.args.arg_extradata.as_ref().or(self.args.arg_extra_data.as_ref()) {
+		match self.args.arg_extra_data.as_ref() {
 			Some(x) if x.len() <= 32 => Ok(x.as_bytes().to_owned()),
 			None => Ok(version_data()),
 			Some(_) => Err("Extra data must be at most 32 characters".into()),
@@ -748,7 +746,7 @@ impl Configuration {
 			Some(Ok(key)) => Some(key),
 			Some(Err(err)) => return Err(err),
 		};
-		ret.discovery_enabled = !self.args.flag_no_discovery && !self.args.flag_nodiscover;
+		ret.discovery_enabled = !self.args.flag_no_discovery;
 		ret.max_peers = self.max_peers();
 		ret.min_peers = self.min_peers();
 		ret.snapshot_peers = self.snapshot_peers();
@@ -772,13 +770,11 @@ impl Configuration {
 	}
 
 	fn network_id(&self) -> Option<u64> {
-		self.args.arg_network_id.or(self.args.arg_networkid)
+		self.args.arg_network_id
 	}
 
 	fn rpc_apis(&self) -> String {
-		let mut apis: Vec<&str> = self.args.arg_rpcapi
-			.as_ref()
-			.unwrap_or(&self.args.arg_jsonrpc_apis)
+		let mut apis: Vec<&str> = self.args.arg_jsonrpc_apis
 			.split(",")
 			.collect();
 
@@ -800,8 +796,7 @@ impl Configuration {
 	}
 
 	fn rpc_cors(&self) -> Option<Vec<String>> {
-		let cors = self.args.arg_rpccorsdomain.clone().unwrap_or_else(|| self.args.arg_jsonrpc_cors.to_owned());
-		Self::cors(&cors)
+		Self::cors(&self.args.arg_jsonrpc_cors)
 	}
 
 	fn hosts(&self, hosts: &str, interface: &str) -> Option<Vec<String>> {
@@ -845,10 +840,10 @@ impl Configuration {
 	fn ipc_config(&self) -> Result<IpcConfiguration, String> {
 		let conf = IpcConfiguration {
 			chmod: self.args.arg_ipc_chmod.clone(),
-			enabled: !(self.args.flag_ipcdisable || self.args.flag_ipc_off || self.args.flag_no_ipc),
+			enabled: !self.args.flag_no_ipc,
 			socket_addr: self.ipc_path(),
 			apis: {
-				let mut apis = self.args.arg_ipcapi.clone().unwrap_or(self.args.arg_ipc_apis.clone());
+				let mut apis = self.args.arg_ipc_apis.clone();
 				if self.args.flag_geth {
 					if !apis.is_empty() {
  						apis.push_str(",");
@@ -866,7 +861,7 @@ impl Configuration {
 		let mut conf = HttpConfiguration::default();
 		conf.enabled = self.rpc_enabled();
 		conf.interface = self.rpc_interface();
-		conf.port = self.args.arg_ports_shift + self.args.arg_rpcport.unwrap_or(self.args.arg_jsonrpc_port);
+		conf.port = self.args.arg_ports_shift + self.args.arg_jsonrpc_port;
 		conf.apis = self.rpc_apis().parse()?;
 		conf.hosts = self.rpc_hosts();
 		conf.cors = self.rpc_cors();
@@ -973,7 +968,7 @@ impl Configuration {
 
 	fn directories(&self) -> Directories {
 		let local_path = default_local_path();
-		let base_path = self.args.arg_base_path.as_ref().or_else(|| self.args.arg_datadir.as_ref()).map_or_else(|| default_data_path(), |s| s.clone());
+		let base_path = self.args.arg_base_path.as_ref().map_or_else(|| default_data_path(), |s| s.clone());
 		let data_path = replace_home("", &base_path);
 		let is_using_base_path = self.args.arg_base_path.is_some();
 		// If base_path is set and db_path is not we default to base path subdir instead of LOCAL.
@@ -1012,7 +1007,7 @@ impl Configuration {
 		} else {
 			parity_ipc_path(
 				&self.directories().base,
-				&self.args.arg_ipcpath.clone().unwrap_or(self.args.arg_ipc_path.clone()),
+				&self.args.arg_ipc_path,
 				self.args.arg_ports_shift,
 			)
 		}
@@ -1031,8 +1026,7 @@ impl Configuration {
 	}
 
 	fn rpc_interface(&self) -> String {
-		let rpc_interface = self.args.arg_rpcaddr.clone().unwrap_or(self.args.arg_jsonrpc_interface.clone());
-		self.interface(&rpc_interface)
+		self.interface(&self.args.arg_jsonrpc_interface)
 	}
 
 	fn ws_interface(&self) -> String {
@@ -1099,7 +1093,7 @@ impl Configuration {
 	}
 
 	fn rpc_enabled(&self) -> bool {
-		!self.args.flag_jsonrpc_off && !self.args.flag_no_jsonrpc
+		!self.args.flag_no_jsonrpc
 	}
 
 	fn ws_enabled(&self) -> bool {
@@ -1207,14 +1201,14 @@ mod tests {
 
 	#[test]
 	fn test_command_version() {
-		let args = vec!["parity", "--version"];
+		let args = vec!["openethereum", "--version"];
 		let conf = parse(&args);
 		assert_eq!(conf.into_command().unwrap().cmd, Cmd::Version);
 	}
 
 	#[test]
 	fn test_command_account_new() {
-		let args = vec!["parity", "account", "new"];
+		let args = vec!["openethereum", "account", "new"];
 		let conf = parse(&args);
 		assert_eq!(conf.into_command().unwrap().cmd, Cmd::Account(AccountCmd::New(NewAccount {
 			iterations: 10240,
@@ -1226,7 +1220,7 @@ mod tests {
 
 	#[test]
 	fn test_command_account_list() {
-		let args = vec!["parity", "account", "list"];
+		let args = vec!["openethereum", "account", "list"];
 		let conf = parse(&args);
 		assert_eq!(conf.into_command().unwrap().cmd, Cmd::Account(
 			AccountCmd::List(ListAccounts {
@@ -1238,7 +1232,7 @@ mod tests {
 
 	#[test]
 	fn test_command_account_import() {
-		let args = vec!["parity", "account", "import", "my_dir", "another_dir"];
+		let args = vec!["openethereum", "account", "import", "my_dir", "another_dir"];
 		let conf = parse(&args);
 		assert_eq!(conf.into_command().unwrap().cmd, Cmd::Account(AccountCmd::Import(ImportAccounts {
 			from: vec!["my_dir".into(), "another_dir".into()],
@@ -1249,7 +1243,7 @@ mod tests {
 
 	#[test]
 	fn test_command_wallet_import() {
-		let args = vec!["parity", "wallet", "import", "my_wallet.json", "--password", "pwd"];
+		let args = vec!["openethereum", "wallet", "import", "my_wallet.json", "--password", "pwd"];
 		let conf = parse(&args);
 		assert_eq!(conf.into_command().unwrap().cmd, Cmd::ImportPresaleWallet(ImportWallet {
 			iterations: 10240,
@@ -1262,7 +1256,7 @@ mod tests {
 
 	#[test]
 	fn test_command_blockchain_import() {
-		let args = vec!["parity", "import", "blockchain.json"];
+		let args = vec!["openethereum", "import", "blockchain.json"];
 		let conf = parse(&args);
 		assert_eq!(conf.into_command().unwrap().cmd, Cmd::Blockchain(BlockchainCmd::Import(ImportBlockchain {
 			spec: Default::default(),
@@ -1286,7 +1280,7 @@ mod tests {
 
 	#[test]
 	fn test_command_blockchain_export() {
-		let args = vec!["parity", "export", "blocks", "blockchain.json"];
+		let args = vec!["openethereum", "export", "blocks", "blockchain.json"];
 		let conf = parse(&args);
 		assert_eq!(conf.into_command().unwrap().cmd, Cmd::Blockchain(BlockchainCmd::Export(ExportBlockchain {
 			spec: Default::default(),
@@ -1309,7 +1303,7 @@ mod tests {
 
 	#[test]
 	fn test_command_state_export() {
-		let args = vec!["parity", "export", "state", "state.json"];
+		let args = vec!["openethereum", "export", "state", "state.json"];
 		let conf = parse(&args);
 		assert_eq!(conf.into_command().unwrap().cmd, Cmd::Blockchain(BlockchainCmd::ExportState(ExportState {
 			spec: Default::default(),
@@ -1334,7 +1328,7 @@ mod tests {
 
 	#[test]
 	fn test_command_blockchain_export_with_custom_format() {
-		let args = vec!["parity", "export", "blocks", "--format", "hex", "blockchain.json"];
+		let args = vec!["openethereum", "export", "blocks", "--format", "hex", "blockchain.json"];
 		let conf = parse(&args);
 		assert_eq!(conf.into_command().unwrap().cmd, Cmd::Blockchain(BlockchainCmd::Export(ExportBlockchain {
 			spec: Default::default(),
@@ -1357,7 +1351,7 @@ mod tests {
 
 	#[test]
 	fn test_command_signer_new_token() {
-		let args = vec!["parity", "signer", "new-token"];
+		let args = vec!["openethereum", "signer", "new-token"];
 		let conf = parse(&args);
 		let expected = Directories::default().signer;
 		assert_eq!(conf.into_command().unwrap().cmd, Cmd::SignerToken(WsConfiguration {
@@ -1379,7 +1373,7 @@ mod tests {
 
 	#[test]
 	fn test_ws_max_connections() {
-		let args = vec!["parity", "--ws-max-connections", "1"];
+		let args = vec!["openethereum", "--ws-max-connections", "1"];
 		let conf = parse(&args);
 
 		assert_eq!(conf.ws_config().unwrap(), WsConfiguration {
@@ -1390,7 +1384,7 @@ mod tests {
 
 	#[test]
 	fn test_run_cmd() {
-		let args = vec!["parity"];
+		let args = vec!["openethereum"];
 		let conf = parse(&args);
 		let mut expected = RunCmd {
 			allow_missing_blocks: false,
@@ -1418,7 +1412,7 @@ mod tests {
 			update_policy: UpdatePolicy {
 				enable_downloading: true,
 				require_consensus: true,
-				filter: UpdateFilter::Critical,
+				filter: UpdateFilter::None,
 				track: ReleaseTrack::Unknown,
 				path: default_hypervisor_path(),
 				max_size: 128 * 1024 * 1024,
@@ -1465,8 +1459,8 @@ mod tests {
 		let mut mining_options = MinerOptions::default();
 
 		// when
-		let conf0 = parse(&["parity"]);
-		let conf2 = parse(&["parity", "--tx-queue-strategy", "gas_price"]);
+		let conf0 = parse(&["openethereum"]);
+		let conf2 = parse(&["openethereum", "--tx-queue-strategy", "gas_price"]);
 
 		// then
 		assert_eq!(conf0.miner_options().unwrap(), mining_options);
@@ -1476,7 +1470,7 @@ mod tests {
 
 	#[test]
 	fn should_fail_on_force_reseal_and_reseal_min_period() {
-		let conf = parse(&["parity", "--chain", "dev", "--force-sealing", "--reseal-min-period", "0"]);
+		let conf = parse(&["openethereum", "--chain", "dev", "--force-sealing", "--reseal-min-period", "0"]);
 
 		assert!(conf.miner_options().is_err());
 	}
@@ -1484,8 +1478,8 @@ mod tests {
 	#[test]
 	fn should_parse_updater_options() {
 		// when
-		let conf0 = parse(&["parity", "--auto-update", "all", "--no-consensus", "--auto-update-delay", "300"]);
-		let conf1 = parse(&["parity", "--auto-update=xxx"]);
+		let conf0 = parse(&["openethereum", "--auto-update", "all", "--no-consensus", "--auto-update-delay", "300"]);
+		let conf1 = parse(&["openethereum", "--auto-update=xxx"]);
 
 		// then
 		assert_eq!(conf0.update_policy().unwrap(), UpdatePolicy {
@@ -1506,7 +1500,7 @@ mod tests {
 		// given
 
 		// when
-		let conf = parse(&["parity", "--testnet", "--identity", "testname"]);
+		let conf = parse(&["openethereum", "--testnet", "--identity", "testname"]);
 
 		// then
 		assert_eq!(conf.network_settings(), Ok(NetworkSettings {
@@ -1521,34 +1515,21 @@ mod tests {
 	}
 
 	#[test]
-	fn should_parse_rpc_settings_with_geth_compatiblity() {
-		// given
-		fn assert(conf: Configuration) {
-			let net = conf.network_settings().unwrap();
-			assert_eq!(net.rpc_enabled, true);
-			assert_eq!(net.rpc_interface, "0.0.0.0".to_owned());
-			assert_eq!(net.rpc_port, 8000);
-			assert_eq!(conf.rpc_cors(), None);
-			assert_eq!(conf.rpc_apis(), "web3,eth".to_owned());
-		}
+	fn should_parse_rpc_settings() {
+		let conf = parse(&[
+			"openethereum",
+			"--jsonrpc-port", "8000",
+			"--jsonrpc-interface", "all",
+			"--jsonrpc-cors", "*",
+			"--jsonrpc-apis", "web3,eth"
+		]);
 
-		// when
-		let conf1 = parse(&["parity", "-j",
-						 "--jsonrpc-port", "8000",
-						 "--jsonrpc-interface", "all",
-						 "--jsonrpc-cors", "*",
-						 "--jsonrpc-apis", "web3,eth"
-						 ]);
-		let conf2 = parse(&["parity", "--rpc",
-							"--rpcport", "8000",
-							"--rpcaddr", "all",
-							"--rpccorsdomain", "*",
-							"--rpcapi", "web3,eth"
-							]);
-
-		// then
-		assert(conf1);
-		assert(conf2);
+		let net = conf.network_settings().unwrap();
+		assert_eq!(net.rpc_enabled, true);
+		assert_eq!(net.rpc_interface, "0.0.0.0".to_owned());
+		assert_eq!(net.rpc_port, 8000);
+		assert_eq!(conf.rpc_cors(), None);
+		assert_eq!(conf.rpc_apis(), "web3,eth".to_owned());
 	}
 
 	#[test]
@@ -1556,10 +1537,10 @@ mod tests {
 		// given
 
 		// when
-		let conf0 = parse(&["parity"]);
-		let conf1 = parse(&["parity", "--jsonrpc-hosts", "none"]);
-		let conf2 = parse(&["parity", "--jsonrpc-hosts", "all"]);
-		let conf3 = parse(&["parity", "--jsonrpc-hosts", "parity.io,something.io"]);
+		let conf0 = parse(&["openethereum"]);
+		let conf1 = parse(&["openethereum", "--jsonrpc-hosts", "none"]);
+		let conf2 = parse(&["openethereum", "--jsonrpc-hosts", "all"]);
+		let conf3 = parse(&["openethereum", "--jsonrpc-hosts", "parity.io,something.io"]);
 
 		// then
 		assert_eq!(conf0.rpc_hosts(), Some(Vec::new()));
@@ -1571,7 +1552,7 @@ mod tests {
 	#[test]
 	fn ensures_sane_http_settings() {
 		// given incorrect settings
-		let conf = parse(&["parity",
+		let conf = parse(&["openethereum",
 			"--jsonrpc-server-threads=0",
 			"--jsonrpc-max-payload=0",
 		]);
@@ -1584,38 +1565,10 @@ mod tests {
 
 	#[test]
 	fn jsonrpc_threading_defaults() {
-		let conf = parse(&["parity"]);
+		let conf = parse(&["openethereum"]);
 		let http_conf = conf.http_config().unwrap();
 		assert_eq!(http_conf.server_threads, 4);
 		assert_eq!(http_conf.max_payload, 5);
-	}
-
-	#[test]
-	fn should_parse_ui_configuration() {
-		// given
-
-		// when
-		let conf0 = parse(&["parity", "--ui-path=signer"]);
-		let conf1 = parse(&["parity", "--ui-path=signer", "--ui-no-validation"]);
-		let conf2 = parse(&["parity", "--ui-path=signer", "--ui-port", "3123"]);
-		let conf3 = parse(&["parity", "--ui-path=signer", "--ui-interface", "test"]);
-		let conf4 = parse(&["parity", "--ui-path=signer", "--force-ui"]);
-
-		// then
-		assert_eq!(conf0.directories().signer, "signer".to_owned());
-
-		assert!(conf1.ws_config().unwrap().hosts.is_some());
-		assert_eq!(conf1.ws_config().unwrap().origins, Some(vec!["parity://*".into(), "chrome-extension://*".into(), "moz-extension://*".into()]));
-		assert_eq!(conf1.directories().signer, "signer".to_owned());
-
-		assert!(conf2.ws_config().unwrap().hosts.is_some());
-		assert_eq!(conf2.directories().signer, "signer".to_owned());
-
-		assert!(conf3.ws_config().unwrap().hosts.is_some());
-		assert_eq!(conf3.directories().signer, "signer".to_owned());
-
-		assert!(conf4.ws_config().unwrap().hosts.is_some());
-		assert_eq!(conf4.directories().signer, "signer".to_owned());
 	}
 
 	#[test]
@@ -1623,7 +1576,7 @@ mod tests {
 		let tempdir = TempDir::new().unwrap();
 		let filename = tempdir.path().join("peers");
 		File::create(&filename).unwrap().write_all(b"  \n\t\n").unwrap();
-		let args = vec!["parity", "--reserved-peers", filename.to_str().unwrap()];
+		let args = vec!["openethereum", "--reserved-peers", filename.to_str().unwrap()];
 		let conf = Configuration::parse_cli(&args).unwrap();
 		assert!(conf.init_reserved_nodes().is_ok());
 	}
@@ -1633,7 +1586,7 @@ mod tests {
 		let tempdir = TempDir::new().unwrap();
 		let filename = tempdir.path().join("peers_comments");
 		File::create(&filename).unwrap().write_all(b"# Sample comment\nenode://6f8a80d14311c39f35f516fa664deaaaa13e85b2f7493f37f6144d86991ec012937307647bd3b9a82abe2974e1407241d54947bbb39763a4cac9f77166ad92a0@172.0.0.1:30303\n").unwrap();
-		let args = vec!["parity", "--reserved-peers", filename.to_str().unwrap()];
+		let args = vec!["openethereum", "--reserved-peers", filename.to_str().unwrap()];
 		let conf = Configuration::parse_cli(&args).unwrap();
 		let reserved_nodes = conf.init_reserved_nodes();
 		assert!(reserved_nodes.is_ok());
@@ -1642,7 +1595,7 @@ mod tests {
 
 	#[test]
 	fn test_dev_preset() {
-		let args = vec!["parity", "--config", "dev"];
+		let args = vec!["openethereum", "--config", "dev"];
 		let conf = Configuration::parse_cli(&args).unwrap();
 		match conf.into_command().unwrap().cmd {
 			Cmd::Run(c) => {
@@ -1656,7 +1609,7 @@ mod tests {
 
 	#[test]
 	fn test_mining_preset() {
-		let args = vec!["parity", "--config", "mining"];
+		let args = vec!["openethereum", "--config", "mining"];
 		let conf = Configuration::parse_cli(&args).unwrap();
 		match conf.into_command().unwrap().cmd {
 			Cmd::Run(c) => {
@@ -1677,7 +1630,7 @@ mod tests {
 
 	#[test]
 	fn test_non_standard_ports_preset() {
-		let args = vec!["parity", "--config", "non-standard-ports"];
+		let args = vec!["openethereum", "--config", "non-standard-ports"];
 		let conf = Configuration::parse_cli(&args).unwrap();
 		match conf.into_command().unwrap().cmd {
 			Cmd::Run(c) => {
@@ -1690,7 +1643,7 @@ mod tests {
 
 	#[test]
 	fn test_insecure_preset() {
-		let args = vec!["parity", "--config", "insecure"];
+		let args = vec!["openethereum", "--config", "insecure"];
 		let conf = Configuration::parse_cli(&args).unwrap();
 		match conf.into_command().unwrap().cmd {
 			Cmd::Run(c) => {
@@ -1709,7 +1662,7 @@ mod tests {
 
 	#[test]
 	fn test_dev_insecure_preset() {
-		let args = vec!["parity", "--config", "dev-insecure"];
+		let args = vec!["openethereum", "--config", "dev-insecure"];
 		let conf = Configuration::parse_cli(&args).unwrap();
 		match conf.into_command().unwrap().cmd {
 			Cmd::Run(c) => {
@@ -1731,7 +1684,7 @@ mod tests {
 
 	#[test]
 	fn test_override_preset() {
-		let args = vec!["parity", "--config", "mining", "--min-peers=99"];
+		let args = vec!["openethereum", "--config", "mining", "--min-peers=99"];
 		let conf = Configuration::parse_cli(&args).unwrap();
 		match conf.into_command().unwrap().cmd {
 			Cmd::Run(c) => {
@@ -1743,7 +1696,7 @@ mod tests {
 
 	#[test]
 	fn test_identity_arg() {
-		let args = vec!["parity", "--identity", "Somebody"];
+		let args = vec!["openethereum", "--identity", "Somebody"];
 		let conf = Configuration::parse_cli(&args).unwrap();
 		match conf.into_command().unwrap().cmd {
 			Cmd::Run(c) => {
@@ -1759,8 +1712,8 @@ mod tests {
 		// given
 
 		// when
-		let conf0 = parse(&["parity", "--ports-shift", "1", "--stratum"]);
-		let conf1 = parse(&["parity", "--ports-shift", "1", "--jsonrpc-port", "8544"]);
+		let conf0 = parse(&["openethereum", "--ports-shift", "1", "--stratum"]);
+		let conf1 = parse(&["openethereum", "--ports-shift", "1", "--jsonrpc-port", "8544"]);
 
 		// then
 		assert_eq!(conf0.net_addresses().unwrap().0.port(), 30304);
@@ -1784,27 +1737,27 @@ mod tests {
 	#[test]
 	fn should_resolve_external_nat_hosts() {
 		// Ip works
-		let conf = parse(&["parity", "--nat", "extip:1.1.1.1"]);
+		let conf = parse(&["openethereum", "--nat", "extip:1.1.1.1"]);
 		assert_eq!(conf.net_addresses().unwrap().1.unwrap().ip().to_string(), "1.1.1.1");
 		assert_eq!(conf.net_addresses().unwrap().1.unwrap().port(), 30303);
 
 		// Ip with port works, port is discarded
-		let conf = parse(&["parity", "--nat", "extip:192.168.1.1:123"]);
+		let conf = parse(&["openethereum", "--nat", "extip:192.168.1.1:123"]);
 		assert_eq!(conf.net_addresses().unwrap().1.unwrap().ip().to_string(), "192.168.1.1");
 		assert_eq!(conf.net_addresses().unwrap().1.unwrap().port(), 30303);
 
 		// Hostname works
-		let conf = parse(&["parity", "--nat", "extip:ethereum.org"]);
+		let conf = parse(&["openethereum", "--nat", "extip:ethereum.org"]);
 		assert!(conf.net_addresses().unwrap().1.is_some());
 		assert_eq!(conf.net_addresses().unwrap().1.unwrap().port(), 30303);
 
 		// Hostname works, garbage at the end is discarded
-		let conf = parse(&["parity", "--nat", "extip:ethereum.org:whatever bla bla 123"]);
+		let conf = parse(&["openethereum", "--nat", "extip:ethereum.org:whatever bla bla 123"]);
 		assert!(conf.net_addresses().unwrap().1.is_some());
 		assert_eq!(conf.net_addresses().unwrap().1.unwrap().port(), 30303);
 
 		// Garbage is error
-		let conf = parse(&["parity", "--nat", "extip:blabla"]);
+		let conf = parse(&["openethereum", "--nat", "extip:blabla"]);
 		assert!(conf.net_addresses().is_err());
 	}
 
@@ -1813,7 +1766,7 @@ mod tests {
 		// given
 
 		// when
-		let conf0 = parse(&["parity", "--unsafe-expose"]);
+		let conf0 = parse(&["openethereum", "--unsafe-expose"]);
 
 		// then
 		assert_eq!(&conf0.network_settings().unwrap().rpc_interface, "0.0.0.0");
@@ -1828,12 +1781,12 @@ mod tests {
 
 	#[test]
 	fn allow_ips() {
-		let all = parse(&["parity", "--allow-ips", "all"]);
-		let private = parse(&["parity", "--allow-ips", "private"]);
-		let block_custom = parse(&["parity", "--allow-ips", "-10.0.0.0/8"]);
-		let combo = parse(&["parity", "--allow-ips", "public 10.0.0.0/8 -1.0.0.0/8"]);
-		let ipv6_custom_public = parse(&["parity", "--allow-ips", "public fc00::/7"]);
-		let ipv6_custom_private = parse(&["parity", "--allow-ips", "private -fc00::/7"]);
+		let all = parse(&["openethereum", "--allow-ips", "all"]);
+		let private = parse(&["openethereum", "--allow-ips", "private"]);
+		let block_custom = parse(&["openethereum", "--allow-ips", "-10.0.0.0/8"]);
+		let combo = parse(&["openethereum", "--allow-ips", "public 10.0.0.0/8 -1.0.0.0/8"]);
+		let ipv6_custom_public = parse(&["openethereum", "--allow-ips", "public fc00::/7"]);
+		let ipv6_custom_private = parse(&["openethereum", "--allow-ips", "private -fc00::/7"]);
 
 		assert_eq!(all.ip_filter().unwrap(), IpFilter {
 			predefined: AllowIP::All,
@@ -1876,8 +1829,8 @@ mod tests {
 	fn should_use_correct_cache_path_if_base_is_set() {
 		use std::path;
 
-		let std = parse(&["parity"]);
-		let base = parse(&["parity", "--base-path", "/test"]);
+		let std = parse(&["openethereum"]);
+		let base = parse(&["openethereum", "--base-path", "/test"]);
 
 		let base_path = ::dir::default_data_path();
 		let local_path = ::dir::default_local_path();
@@ -1887,7 +1840,7 @@ mod tests {
 
 	#[test]
 	fn should_respect_only_max_peers_and_default() {
-		let args = vec!["parity", "--max-peers=50"];
+		let args = vec!["openethereum", "--max-peers=50"];
 		let conf = Configuration::parse_cli(&args).unwrap();
 		match conf.into_command().unwrap().cmd {
 			Cmd::Run(c) => {
@@ -1900,7 +1853,7 @@ mod tests {
 
 	#[test]
 	fn should_respect_only_max_peers_less_than_default() {
-		let args = vec!["parity", "--max-peers=5"];
+		let args = vec!["openethereum", "--max-peers=5"];
 		let conf = Configuration::parse_cli(&args).unwrap();
 		match conf.into_command().unwrap().cmd {
 			Cmd::Run(c) => {
@@ -1913,7 +1866,7 @@ mod tests {
 
 	#[test]
 	fn should_respect_only_min_peers_and_default() {
-		let args = vec!["parity", "--min-peers=5"];
+		let args = vec!["openethereum", "--min-peers=5"];
 		let conf = Configuration::parse_cli(&args).unwrap();
 		match conf.into_command().unwrap().cmd {
 			Cmd::Run(c) => {
@@ -1926,7 +1879,7 @@ mod tests {
 
 	#[test]
 	fn should_respect_only_min_peers_and_greater_than_default() {
-		let args = vec!["parity", "--min-peers=500"];
+		let args = vec!["openethereum", "--min-peers=500"];
 		let conf = Configuration::parse_cli(&args).unwrap();
 		match conf.into_command().unwrap().cmd {
 			Cmd::Run(c) => {
@@ -1942,9 +1895,9 @@ mod tests {
 		// given
 
 		// when
-		let conf0 = parse(&["parity"]);
-		let conf1 = parse(&["parity", "--secretstore-http-cors", "*"]);
-		let conf2 = parse(&["parity", "--secretstore-http-cors", "http://parity.io,http://something.io"]);
+		let conf0 = parse(&["openethereum"]);
+		let conf1 = parse(&["openethereum", "--secretstore-http-cors", "*"]);
+		let conf2 = parse(&["openethereum", "--secretstore-http-cors", "http://parity.io,http://something.io"]);
 
 		// then
 		assert_eq!(conf0.secretstore_cors(), Some(vec![]));
