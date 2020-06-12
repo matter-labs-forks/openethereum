@@ -75,7 +75,14 @@ criterion_group!(
 	blockhash_mulmod_small,
 	blockhash_mulmod_large,
 );
-criterion_main!(basic);
+
+criterion_group!(
+	name = advanced;
+    config = Criterion::default().sample_size(10).measurement_time(std::time::Duration::from_secs(60));
+    targets = staticcall, staticcall_berlin, dummy_loop
+);
+// criterion_main!(basic);
+criterion_main!(advanced);
 
 fn simple_loop_log0_usize(b: &mut Criterion) {
 	b.bench_function("simple_loop_log0_usize", |b| {
@@ -414,5 +421,112 @@ fn smod500(b: &mut Criterion) {
 fn smod1000(b: &mut Criterion) {
 	b.bench_function("smod randomly generated ints, 1000 times", |b| {
 		run_code(b, hex!("6103e85b600190037fb8e0a2b6b1587398c28bf9e9d34ea24ba34df308eec2acedca363b2fce2c25db7fcc2de1f8ec6cc9a24ed2c48b856637f9e45f0a5feee21a196aa42a290ef454ca075080600357").to_vec());
+	});
+}
+
+/// Runs a given EVM bytecode.
+fn run_until_out_of_gascode(b: &mut Bencher, code: Bytes, gas: U256, use_berlin: bool) {
+	let zero = U256::from(0);
+	b.iter_batched(
+		|| {
+			let factory = Factory::default();
+			let mut ext = if use_berlin {
+				FakeExt::new_berlin()
+			} else {
+				FakeExt::new_istanbul()
+			};
+			ext.is_static = true;
+			let mut params = ActionParams::default();
+			params.address = Address::from_str("0f572e5295c57f15886f9b263e2f6d2d6c7b5ec6").unwrap();
+			params.gas = gas;
+			params.code = Some(Arc::new(black_box(code.clone())));
+			let vm = factory.create(params, ext.schedule(), 0);
+
+			(vm, ext)
+		},
+		|(vm, mut ext)| {
+			let res = result(vm.exec(&mut ext).ok().unwrap());
+			assert_eq!(res, zero);
+		},
+		criterion::BatchSize::LargeInput
+	);
+}
+
+fn make_staticall_code() -> Vec<u8> {
+	let mut code = vec![];
+	use evm::Instruction;
+	code.push(Instruction::JUMPDEST as u8);
+	code.push(Instruction::PUSH1 as u8);
+	code.push(0u8);
+	code.push(Instruction::DUP1 as u8);
+	code.push(Instruction::DUP1 as u8);
+	code.push(Instruction::DUP1 as u8);
+	code.push(Instruction::PUSH1 as u8);
+	code.push(4u8);
+	code.push(Instruction::GAS as u8);
+	code.push(Instruction::STATICCALL as u8);
+	code.push(Instruction::POP as u8);
+	code.push(Instruction::PUSH1 as u8);
+	code.push(0u8);
+	code.push(Instruction::JUMP as u8);
+
+	code
+}
+
+fn make_dummy_loop_code() -> Vec<u8> {
+	let mut code = vec![];
+	use evm::Instruction;
+	code.push(Instruction::JUMPDEST as u8);
+	code.push(Instruction::PUSH1 as u8);
+	code.push(0u8);
+	code.push(Instruction::DUP1 as u8);
+	code.push(Instruction::DUP1 as u8);
+	code.push(Instruction::DUP1 as u8);
+	code.push(Instruction::PUSH1 as u8);
+	code.push(4u8);
+	code.push(Instruction::GAS as u8);
+	code.push(Instruction::POP as u8); // 6 pops in total
+	code.push(Instruction::POP as u8);
+	code.push(Instruction::POP as u8);
+	code.push(Instruction::POP as u8);
+	code.push(Instruction::POP as u8);
+	code.push(Instruction::POP as u8);
+	code.push(Instruction::PUSH1 as u8);
+	code.push(0u8);
+	code.push(Instruction::JUMP as u8);
+
+	code
+}
+
+fn staticcall(b: &mut Criterion) {
+	b.bench_function("crunch through identity for 100M gas", |b| {
+		run_until_out_of_gascode(
+			b,
+			make_staticall_code(),
+			U256::from(100_000_000),
+			false
+		);
+	});
+}
+
+fn staticcall_berlin(b: &mut Criterion) {
+	b.bench_function("crunch through identity for 100M gas with 40 gas per staticcall", |b| {
+		run_until_out_of_gascode(
+			b,
+			make_staticall_code(),
+			U256::from(100_000_000),
+			true
+		);
+	});
+}
+
+fn dummy_loop(b: &mut Criterion) {
+	b.bench_function("crunch through dummy loop with pops instead of staticcall for 100M gas", |b| {
+		run_until_out_of_gascode(
+			b,
+			make_dummy_loop_code(),
+			U256::from(100_000_000),
+			false
+		);
 	});
 }
