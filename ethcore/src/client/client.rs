@@ -375,8 +375,6 @@ impl Importer {
 			}
 		}
 
-		let db = client.db.read();
-		db.key_value().flush().expect("DB flush failed.");
 		imported
 	}
 
@@ -493,10 +491,9 @@ impl Importer {
 			let mut batch = DBTransaction::new();
 			chain.insert_unordered_block(&mut batch, encoded::Block::new(unverified.bytes), receipts, None, false, true);
 			// Final commit to the DB
-			db.write_buffered(batch);
+			db.write(batch)?;
 			chain.commit();
 		}
-		db.flush().expect("DB flush failed.");
 		Ok(())
 	}
 
@@ -595,7 +592,7 @@ impl Importer {
 		let is_canon = route.enacted.last().map_or(false, |h| h == hash);
 		state.sync_cache(&route.enacted, &route.retracted, is_canon);
 		// Final commit to the DB
-		client.db.read().key_value().write_buffered(batch);
+		client.db.read().key_value().write(batch).expect("Low level database error writing a transaction. Some issue with the disk?");
 		chain.commit();
 
 		self.check_epoch_end(&header, &finalized, &chain, client);
@@ -837,12 +834,10 @@ impl Client {
 					proof,
 				});
 
-				client.db.read().key_value().write_buffered(batch);
+				client.db.read().key_value().write(batch)?;
 			}
 		}
 
-		// ensure buffered changes are flushed.
-		client.db.read().key_value().flush()?;
 		Ok(client)
 	}
 
@@ -975,7 +970,8 @@ impl Client {
 		// If a snapshot is under way, no pruning happens and memory consumption is allowed to
 		// increase above the memory target until the snapshot has finished.
 		loop {
-			let needs_pruning = state_db.journal_db().journal_size() >= self.config.history_mem;
+			let journal_size = state_db.journal_db().journal_size();
+			let needs_pruning = journal_size >= self.config.history_mem;
 
 			if !needs_pruning {
 				break
@@ -988,18 +984,17 @@ impl Client {
 						// Note: journal_db().mem_used() can be used for a more accurate memory
 						// consumption measurement but it can be expensive so sticking with the
 						// faster `journal_size()` instead.
-						trace!(target: "pruning", "Pruning is paused at era {} (snapshot under way); earliest era={}, latest era={}, journal_size={} – Not pruning.",
-						       freeze_at, earliest_era, latest_era, state_db.journal_db().journal_size());
+						info!(target: "pruning", "Pruning is paused at era {} (snapshot under way); earliest era={}, latest era={}, journal_size={} – Not pruning.",
+						       freeze_at, earliest_era, latest_era, journal_size);
 						break;
 					}
-					trace!(target: "pruning", "Pruning state for ancient era #{}; latest era={}, journal_size={}",
-					       earliest_era, latest_era, state_db.journal_db().journal_size());
+					info!(target: "pruning", "Pruning state for ancient era #{}; latest era={}, journal_size={}",
+					       earliest_era, latest_era, journal_size);
 					match chain.block_hash(earliest_era) {
 						Some(ancient_hash) => {
 							let mut batch = DBTransaction::new();
 							state_db.mark_canonical(&mut batch, earliest_era, &ancient_hash)?;
-							self.db.read().key_value().write_buffered(batch);
-							state_db.journal_db().flush();
+							self.db.read().key_value().write(batch)?;
 						}
 						None =>
 							debug!(target: "pruning", "Missing expected hash for block {}", earliest_era),
@@ -1764,6 +1759,11 @@ impl BlockChainClient for Client {
 		}
 	}
 
+	fn is_processing_fork(&self) -> bool {
+		let chain = self.chain.read();
+		self.importer.block_queue.is_processing_fork(&chain.best_block_hash(), &chain)
+	}
+
 	fn block_total_difficulty(&self, id: BlockId) -> Option<U256> {
 		let chain = self.chain.read();
 
@@ -2463,7 +2463,6 @@ impl ImportSealedBlock for Client {
 				)
 			);
 		});
-		self.db.read().key_value().flush().expect("DB flush failed.");
 		Ok(hash)
 	}
 }
@@ -2613,7 +2612,7 @@ impl SnapshotClient for Client {
 		self.snapshotting_at.store(actual_block_nr, Ordering::SeqCst);
 		{
 			scopeguard::defer! {{
-				trace!(target: "snapshot", "Re-enabling pruning.");
+				info!(target: "snapshot", "Re-enabling pruning.");
 				self.snapshotting_at.store(0, Ordering::SeqCst)
 			}};
 			let chunker = snapshot::chunker(self.engine.snapshot_mode()).ok_or_else(|| SnapshotError::SnapshotsUnsupported)?;
